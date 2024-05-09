@@ -14,9 +14,7 @@ hyperparameter. Some cleaners are English-specific. You'll typically want to use
 
 import re
 from unidecode import unidecode
-from phonemizer import phonemize
-from phonemizer.backend import EspeakBackend
-backend = EspeakBackend("en-us", preserve_punctuation=True, with_stress=True)
+from text.thai import thai_text_to_phonemes
 
 
 # Regular expression matching whitespace:
@@ -90,8 +88,8 @@ def english_cleaners(text):
     text = convert_to_ascii(text)
     text = lowercase(text)
     text = expand_abbreviations(text)
-    phonemes = phonemize(text, language="en-us", backend="espeak", strip=True)
-    phonemes = collapse_whitespace(phonemes)
+    # phonemes = phonemize(text, language="en-us", backend="espeak", strip=True)
+    # phonemes = collapse_whitespace(phonemes)
     return phonemes
 
 
@@ -100,16 +98,17 @@ def english_cleaners2(text):
     text = convert_to_ascii(text)
     text = lowercase(text)
     text = expand_abbreviations(text)
-    phonemes = phonemize(
-        text,
-        language="en-us",
-        backend="espeak",
-        strip=True,
-        preserve_punctuation=True,
-        with_stress=True,
-    )
-    phonemes = collapse_whitespace(phonemes)
-    return phonemes
+    return text
+    # phonemes = phonemize(
+    #     text,
+    #     language="en-us",
+    #     backend="espeak",
+    #     strip=True,
+    #     preserve_punctuation=True,
+    #     with_stress=True,
+    # )
+    # phonemes = collapse_whitespace(phonemes)
+    # return phonemes
 
 
 def english_cleaners3(text):
@@ -120,3 +119,17 @@ def english_cleaners3(text):
     phonemes = backend.phonemize([text], strip=True)[0]
     phonemes = collapse_whitespace(phonemes)
     return phonemes
+
+def japanese_cleaner(text):
+    return text.replace('...', '…')
+
+def cjke_cleaners2(text):
+    text = re.sub(r'\[JA\](.*?)\[JA\]',
+                  lambda x: japanese_cleaner(x.group(1))+' ', text)
+    text = re.sub(r'\[TH\](.*?)\[TH\]',
+                  lambda x: thai_text_to_phonemes(x.group(1))+' ', text)
+    text = re.sub(r'\[EN\](.*?)\[EN\]',
+                  lambda x: english_cleaners2(x.group(1))+' ', text)
+    text = re.sub(r'\s+$', '', text)
+    text = re.sub(r'([^\.,!\?\-…~])$', r'\1.', text)
+    return text
