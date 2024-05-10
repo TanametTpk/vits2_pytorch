@@ -6,6 +6,7 @@ from torch import nn
 from torch.nn import AvgPool1d, Conv1d, Conv2d, ConvTranspose1d
 from torch.nn import functional as F
 from torch.nn.utils import remove_weight_norm, spectral_norm, weight_norm
+from typing import Dict, List, Tuple, Union
 
 import attentions
 import commons
@@ -36,8 +37,14 @@ class StochasticDurationPredictor(nn.Module):
         p_dropout,
         n_flows=4,
         gin_channels=0,
+        language_emb_dim=0,
     ):
         super().__init__()
+
+        # add language embedding dim in the input
+        if language_emb_dim:
+            in_channels += language_emb_dim
+
         filter_channels = in_channels  # it needs to be removed from future version.
         self.in_channels = in_channels
         self.filter_channels = filter_channels
@@ -76,12 +83,16 @@ class StochasticDurationPredictor(nn.Module):
         if gin_channels != 0:
             self.cond = nn.Conv1d(gin_channels, filter_channels, 1)
 
-    def forward(self, x, x_mask, w=None, g=None, reverse=False, noise_scale=1.0):
+    def forward(self, x, x_mask, w=None, g=None, reverse=False, noise_scale=1.0, lang_emb=None,):
         x = torch.detach(x)
         x = self.pre(x)
         if g is not None:
             g = torch.detach(g)
             x = x + self.cond(g)
+
+        if lang_emb is not None:
+            x = x + self.cond_lang(lang_emb)
+
         x = self.convs(x, x_mask)
         x = self.proj(x) * x_mask
 
@@ -140,9 +151,13 @@ class StochasticDurationPredictor(nn.Module):
 
 class DurationPredictor(nn.Module):
     def __init__(
-        self, in_channels, filter_channels, kernel_size, p_dropout, gin_channels=0
+        self, in_channels, filter_channels, kernel_size, p_dropout, gin_channels=0, language_emb_dim=None
     ):
         super().__init__()
+
+        # add language embedding dim in the input
+        if language_emb_dim:
+            in_channels += language_emb_dim
 
         self.in_channels = in_channels
         self.filter_channels = filter_channels
@@ -164,11 +179,18 @@ class DurationPredictor(nn.Module):
         if gin_channels != 0:
             self.cond = nn.Conv1d(gin_channels, in_channels, 1)
 
-    def forward(self, x, x_mask, g=None):
+        if language_emb_dim != 0 and language_emb_dim is not None:
+            self.cond_lang = nn.Conv1d(language_emb_dim, in_channels, 1)
+
+    def forward(self, x, x_mask, g=None, lang_emb=None):
         x = torch.detach(x)
         if g is not None:
             g = torch.detach(g)
             x = x + self.cond(g)
+
+        if lang_emb is not None:
+            x = x + self.cond_lang(lang_emb)
+
         x = self.conv_1(x * x_mask)
         x = torch.relu(x)
         x = self.norm_1(x)
@@ -342,6 +364,7 @@ class TextEncoder(nn.Module):
         kernel_size,
         p_dropout,
         gin_channels=0,
+        language_emb_dim: int = None,
     ):
         super().__init__()
         self.n_vocab = n_vocab
@@ -356,6 +379,11 @@ class TextEncoder(nn.Module):
         self.emb = nn.Embedding(n_vocab, hidden_channels)
         nn.init.normal_(self.emb.weight, 0.0, hidden_channels**-0.5)
 
+        # ADD - lang embbed
+        if language_emb_dim:
+            hidden_channels += language_emb_dim
+        # ADD - lang embbed
+
         self.encoder = attentions.Encoder(
             hidden_channels,
             filter_channels,
@@ -367,8 +395,14 @@ class TextEncoder(nn.Module):
         )
         self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
-    def forward(self, x, x_lengths, g=None):
+    def forward(self, x, x_lengths, g=None, lang_emb=None):
         x = self.emb(x) * math.sqrt(self.hidden_channels)  # [b, t, h]
+
+        # ADD - lang embbed
+        if lang_emb is not None:
+            x = torch.cat((x, lang_emb.transpose(2, 1).expand(x.size(0), x.size(1), -1)), dim=-1)
+        # ADD - lang embbed
+
         x = torch.transpose(x, 1, -1)  # [b, h, t]
         x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(
             x.dtype
@@ -1137,6 +1171,9 @@ class SynthesizerTrn(nn.Module):
         n_speakers=0,
         gin_channels=0,
         use_sdp=True,
+        use_language_embedding=False,
+        num_languages=1,
+        embedded_language_dim=0,
         **kwargs,
     ):
         super().__init__()
@@ -1158,6 +1195,12 @@ class SynthesizerTrn(nn.Module):
         self.segment_size = segment_size
         self.n_speakers = n_speakers
         self.gin_channels = gin_channels
+
+        # ADD - lang embed
+        self.use_language_embedding = use_language_embedding
+        self.num_languages = num_languages
+        self.embedded_language_dim = embedded_language_dim
+
         self.use_spk_conditioned_encoder = kwargs.get(
             "use_spk_conditioned_encoder", False
         )
@@ -1180,6 +1223,14 @@ class SynthesizerTrn(nn.Module):
             self.enc_gin_channels = gin_channels
         else:
             self.enc_gin_channels = 0
+
+        # ADD - lang embbed
+        if self.use_language_embedding:
+            self.emb_l = nn.Embedding(self.num_languages, self.embedded_language_dim)
+            torch.nn.init.xavier_uniform_(self.emb_l.weight)
+        else:
+            self.embedded_language_dim = 0
+
         self.enc_p = TextEncoder(
             n_vocab,
             inter_channels,
@@ -1190,6 +1241,7 @@ class SynthesizerTrn(nn.Module):
             kernel_size,
             p_dropout,
             gin_channels=self.enc_gin_channels,
+            language_emb_dim=self.embedded_language_dim,
         )
 
         self.dec = Generator(
@@ -1225,23 +1277,37 @@ class SynthesizerTrn(nn.Module):
 
         if use_sdp:
             self.dp = StochasticDurationPredictor(
-                hidden_channels, 192, 3, 0.5, 4, gin_channels=gin_channels
+                hidden_channels, 192, 3, 0.5, 4, gin_channels=gin_channels,
+                language_emb_dim=self.embedded_language_dim,
             )
         else:
             self.dp = DurationPredictor(
-                hidden_channels, 256, 3, 0.5, gin_channels=gin_channels
+                hidden_channels, 256, 3, 0.5, gin_channels=gin_channels,
+                language_emb_dim=self.embedded_language_dim,
             )
 
         if n_speakers > 1:
             self.emb_g = nn.Embedding(n_speakers, gin_channels)
 
-    def forward(self, x, x_lengths, y, y_lengths, sid=None):
+    def forward(self, x, x_lengths, y, y_lengths, sid=None, language_ids=None):
+
+        # ADD - lang embbed
+        sid, g, lid, _ = self._set_cond_input({
+            "speaker_ids": sid,
+            "language_ids": language_ids
+        })
+
         if self.n_speakers > 0:
             g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
         else:
             g = None
 
-        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, g=g)
+        # ADD - lang embbed
+        lang_emb = None
+        if self.args.use_language_embedding and lid is not None:
+            lang_emb = self.emb_l(lid).unsqueeze(-1)
+
+        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, g=g, lang_emb=lang_emb)
         z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
         z_p = self.flow(z, y_mask, g=g)
 
@@ -1281,11 +1347,11 @@ class SynthesizerTrn(nn.Module):
         if self.use_sdp:
             l_length = self.dp(x, x_mask, w, g=g)
             l_length = l_length / torch.sum(x_mask)
-            logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=1.0)
+            logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=1.0, lang_emb=lang_emb)
             logw_ = torch.log(w + 1e-6) * x_mask
         else:
             logw_ = torch.log(w + 1e-6) * x_mask
-            logw = self.dp(x, x_mask, g=g)
+            logw = self.dp(x, x_mask, g=g, lang_emb=lang_emb)
             l_length = torch.sum((logw - logw_) ** 2, [1, 2]) / torch.sum(
                 x_mask
             )  # for averaging
@@ -1308,6 +1374,35 @@ class SynthesizerTrn(nn.Module):
             (z, z_p, m_p, logs_p, m_q, logs_q),
             (x, logw, logw_),
         )
+    
+    @staticmethod
+    def _set_cond_input(aux_input: Dict):
+        """Set the speaker conditioning input based on the multi-speaker mode."""
+        sid, g, lid, durations = None, None, None, None
+        if "speaker_ids" in aux_input and aux_input["speaker_ids"] is not None:
+            sid = aux_input["speaker_ids"]
+            if sid.ndim == 0:
+                sid = sid.unsqueeze_(0)
+        if "d_vectors" in aux_input and aux_input["d_vectors"] is not None:
+            g = F.normalize(aux_input["d_vectors"]).unsqueeze(-1)
+            if g.ndim == 2:
+                g = g.unsqueeze_(0)
+
+        if "language_ids" in aux_input and aux_input["language_ids"] is not None:
+            lid = aux_input["language_ids"]
+            if lid.ndim == 0:
+                lid = lid.unsqueeze_(0)
+
+        if "durations" in aux_input and aux_input["durations"] is not None:
+            durations = aux_input["durations"]
+
+        return sid, g, lid, durations
+    
+    # @staticmethod
+    # def _set_x_lengths(x, aux_input):
+    #     if "x_lengths" in aux_input and aux_input["x_lengths"] is not None:
+    #         return aux_input["x_lengths"]
+    #     return torch.tensor(x.shape[1:2]).to(x.device)
 
     def infer(
         self,
@@ -1318,17 +1413,54 @@ class SynthesizerTrn(nn.Module):
         length_scale=1,
         noise_scale_w=1.0,
         max_len=None,
+        language_ids=None
     ):
+        
+        # ADD - lang embbed
+        sid, g, lid, durations = self._set_cond_input({
+            "speaker_ids": sid,
+            "language_ids": language_ids
+        })
+        # ADD - lang embbed
+
+        # x_lengths = self._set_x_lengths(x, aux_input)
+
+        # aux_input={
+        #             "x_lengths": text_lengths,
+        #             "d_vectors": None,
+        #             "speaker_ids": sid,
+        #             "language_ids": langid,
+        #             "durations": None,
+        #         },
+
         if self.n_speakers > 0:
             g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
         else:
             g = None
-        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, g=g)
-        if self.use_sdp:
-            logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w)
+
+        # ADD - lang embbed
+        lang_emb = None
+        if self.args.use_language_embedding and lid is not None:
+            lang_emb = self.emb_l(lid).unsqueeze(-1)
+        # ADD - lang embbed
+
+        # ADD - lang embbed
+        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, g=g, lang_emb=lang_emb)
+        # ADD - lang embbed
+
+        # x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, g=g)
+
+        # ADD - lang embbed
+        if durations is None:
+            if self.use_sdp:
+                logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w)
+            else:
+                logw = self.dp(x, x_mask, g=g)
+            w = torch.exp(logw) * x_mask * length_scale
         else:
-            logw = self.dp(x, x_mask, g=g)
-        w = torch.exp(logw) * x_mask * length_scale
+            assert durations.shape[-1] == x.shape[-1]
+            w = durations.unsqueeze(0)
+
         w_ceil = torch.ceil(w)
         y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
         y_mask = torch.unsqueeze(commons.sequence_mask(y_lengths, None), 1).to(

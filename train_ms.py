@@ -198,6 +198,9 @@ def run(rank, n_gpus, hps):
         n_speakers=hps.data.n_speakers,
         mas_noise_scale_initial=mas_noise_scale_initial,
         noise_scale_delta=noise_scale_delta,
+        use_language_embedding=hps.model.use_language_embedding,
+        num_languages=hps.model.num_languages,
+        embedded_language_dim=hps.model.embedded_language_dim,
         **hps.model,
     ).cuda(rank)
     net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm).cuda(rank)

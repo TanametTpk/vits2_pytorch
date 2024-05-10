@@ -20,3 +20,4 @@ jamo
 pypinyin
 jieba
 unidecode
+inflect

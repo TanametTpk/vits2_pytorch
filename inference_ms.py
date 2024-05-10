@@ -43,6 +43,9 @@ net_g = SynthesizerTrn(
     posterior_channels,
     hps.train.segment_size // hps.data.hop_length,
     n_speakers=hps.data.n_speakers,
+    use_language_embedding=hps.model.use_language_embedding,
+    num_languages=hps.model.num_languages,
+    embedded_language_dim=hps.model.embedded_language_dim,
     **hps.model
 ).cuda()
 _ = net_g.eval()
