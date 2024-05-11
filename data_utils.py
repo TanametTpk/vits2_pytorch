@@ -251,11 +251,11 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
 
         audiopaths_sid_text_new = []
         lengths = []
-        for audiopath, sid, text in self.audiopaths_sid_text:
+        for audiopath, sid, lang_id, text in self.audiopaths_sid_text:
             if not os.path.isfile(audiopath):
                 continue
             if self.min_text_len <= len(text) and len(text) <= self.max_text_len:
-                audiopaths_sid_text_new.append([audiopath, sid, text])
+                audiopaths_sid_text_new.append([audiopath, sid, lang_id, text])
                 length = os.path.getsize(audiopath) // (2 * self.hop_length)
                 if length < self.min_audio_len // self.hop_length:
                     continue
@@ -268,15 +268,17 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
 
     def get_audio_text_speaker_pair(self, audiopath_sid_text):
         # separate filename, speaker_id and text
-        audiopath, sid, text = (
+        audiopath, sid, lang_id, text = (
             audiopath_sid_text[0],
             audiopath_sid_text[1],
             audiopath_sid_text[2],
+            audiopath_sid_text[3],
         )
         text = self.get_text(text)
         spec, wav = self.get_audio(audiopath)
         sid = self.get_sid(sid)
-        return (text, spec, wav, sid)
+        lang_id = self.get_lang_id(lang_id)
+        return (text, spec, wav, sid, lang_id)
 
     def get_audio(self, filename):
         # TODO : if linear spec exists convert to mel from existing linear spec
@@ -342,6 +344,10 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
     def get_sid(self, sid):
         sid = torch.LongTensor([int(sid)])
         return sid
+    
+    def get_lang_id(self, lang_id):
+        lang_id = torch.LongTensor([int(lang_id)])
+        return lang_id
 
     def __getitem__(self, index):
         return self.get_audio_text_speaker_pair(self.audiopaths_sid_text[index])
@@ -375,6 +381,7 @@ class TextAudioSpeakerCollate:
         spec_lengths = torch.LongTensor(len(batch))
         wav_lengths = torch.LongTensor(len(batch))
         sid = torch.LongTensor(len(batch))
+        lang_id = torch.LongTensor(len(batch))
 
         text_padded = torch.LongTensor(len(batch), max_text_len)
         spec_padded = torch.FloatTensor(len(batch), batch[0][1].size(0), max_spec_len)
@@ -398,6 +405,7 @@ class TextAudioSpeakerCollate:
             wav_lengths[i] = wav.size(1)
 
             sid[i] = row[3]
+            lang_id[i] = row[4]
 
         if self.return_ids:
             return (
@@ -408,6 +416,7 @@ class TextAudioSpeakerCollate:
                 wav_padded,
                 wav_lengths,
                 sid,
+                lang_id,
                 ids_sorted_decreasing,
             )
         return (
@@ -418,6 +427,7 @@ class TextAudioSpeakerCollate:
             wav_padded,
             wav_lengths,
             sid,
+            lang_id
         )
 
 

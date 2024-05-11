@@ -47,23 +47,77 @@ def rand_gumbel_like(x):
     return g
 
 
-def slice_segments(x, ids_str, segment_size=4):
-    ret = torch.zeros_like(x[:, :, :segment_size])
+# def slice_segments(x, ids_str, segment_size=4):
+#     ret = torch.zeros_like(x[:, :, :segment_size])
+#     for i in range(x.size(0)):
+#         idx_str = ids_str[i]
+#         idx_end = idx_str + segment_size
+#         ret[i] = x[i, :, idx_str:idx_end]
+#     return ret
+
+# this is function slice_segment but from coqui
+def segment(x: torch.tensor, segment_indices: torch.tensor, segment_size=4, pad_short=False):
+    """Segment each sample in a batch based on the provided segment indices
+
+    Args:
+        x (torch.tensor): Input tensor.
+        segment_indices (torch.tensor): Segment indices.
+        segment_size (int): Expected output segment size.
+        pad_short (bool): Pad the end of input tensor with zeros if shorter than the segment size.
+    """
+    # pad the input tensor if it is shorter than the segment size
+    if pad_short and x.shape[-1] < segment_size:
+        x = torch.nn.functional.pad(x, (0, segment_size - x.size(2)))
+
+    segments = torch.zeros_like(x[:, :, :segment_size])
+
     for i in range(x.size(0)):
-        idx_str = ids_str[i]
-        idx_end = idx_str + segment_size
-        ret[i] = x[i, :, idx_str:idx_end]
-    return ret
+        index_start = segment_indices[i]
+        index_end = index_start + segment_size
+        x_i = x[i]
+        if pad_short and index_end >= x.size(2):
+            # pad the sample if it is shorter than the segment size
+            x_i = torch.nn.functional.pad(x_i, (0, (index_end + 1) - x.size(2)))
+        segments[i] = x_i[:, index_start:index_end]
+    return segments
 
+def slice_segments(x, ids_str, segment_size=4):
+    gather_indices = ids_str.view(x.size(0), 1, 1).repeat(
+        1, x.size(1), 1
+    ) + torch.arange(segment_size, device=x.device)
+    return torch.gather(x, 2, gather_indices)
 
-def rand_slice_segments(x, x_lengths=None, segment_size=4):
+def rand_slice_segments(x, x_lengths=None, segment_size=4, pad_short=True, let_short_samples=True):
     b, d, t = x.size()
+
+    # pad_short (bool): Pad the end of input tensor with zeros if shorter than the segment size.
+    if pad_short:
+        if t < segment_size:
+            x = torch.nn.functional.pad(x, (0, segment_size - t))
+            t = segment_size
+
+    # this code is the same from coqui tts
     if x_lengths is None:
         x_lengths = t
-    ids_str_max = x_lengths - segment_size + 1
-    ids_str = (torch.rand([b]).to(device=x.device) * ids_str_max).to(dtype=torch.long)
-    ret = slice_segments(x, ids_str, segment_size)
-    return ret, ids_str
+
+    len_diff = x_lengths - segment_size
+    if let_short_samples:
+        x_lengths[len_diff < 0] = segment_size
+        len_diff = x_lengths - segment_size
+    else:
+        assert all(
+            len_diff > 0
+        ), f" [!] At least one sample is shorter than the segment size ({segment_size}). \n {x_lengths}"
+    segment_indices = (torch.rand([b]).type_as(x) * (len_diff + 1)).long()
+    ret = segment(x, segment_indices, segment_size, pad_short=pad_short)
+    return ret, segment_indices
+
+    # if x_lengths is None:
+    #     x_lengths = t
+    # ids_str_max = torch.clamp(x_lengths - segment_size + 1, min=0)
+    # ids_str = (torch.rand([b]).to(device=x.device) * ids_str_max).to(dtype=torch.long)
+    # ret = slice_segments(x, ids_str, segment_size)
+    # return ret, ids_str
 
 
 def get_timing_signal_1d(length, channels, min_timescale=1.0, max_timescale=1.0e4):

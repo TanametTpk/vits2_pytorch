@@ -7,32 +7,32 @@ from pythainlp.tokenize import word_tokenize
 from pythainlp.util import normalize
 
 _ALPHASYMBOL_YOMI = {
-    'a': 'เอ',
-    'b':'บี',
-    'c':'ซี',
-    'd':'ดี',
-    'e':'อี',
-    'f':'เอฟ',
-    'g':'จี',
-    'h':'เอช',
-    'i':'ไอ',
-    'j':'เจ',
-    'k':'เค',
-    'l':'แอล',
-    'm':'เอ็ม',
-    'n':'เอ็น',
-    'o':'โอ',
-    'p':'พี',
-    'q':'คิว',
-    'r':'แอร์',
-    's':'เอส',
-    't':'ที',
-    'u':'ยู',
-    'v':'วี',
-    'w':'ดับเบิลยู',
-    'x':'เอ็กซ์',
-    'y':'วาย',
-    'z':'ซี',
+    # 'a': 'เอ',
+    # 'b':'บี',
+    # 'c':'ซี',
+    # 'd':'ดี',
+    # 'e':'อี',
+    # 'f':'เอฟ',
+    # 'g':'จี',
+    # 'h':'เอช',
+    # 'i':'ไอ',
+    # 'j':'เจ',
+    # 'k':'เค',
+    # 'l':'แอล',
+    # 'm':'เอ็ม',
+    # 'n':'เอ็น',
+    # 'o':'โอ',
+    # 'p':'พี',
+    # 'q':'คิว',
+    # 'r':'แอร์',
+    # 's':'เอส',
+    # 't':'ที',
+    # 'u':'ยู',
+    # 'v':'วี',
+    # 'w':'ดับเบิลยู',
+    # 'x':'เอ็กซ์',
+    # 'y':'วาย',
+    # 'z':'ซี',
     '%':'เปอร์เซ็น'
 }
 
@@ -115,7 +115,7 @@ def maiyamok(sent, engine):
     _list_word = []
     i = 0
     for j, text in enumerate(sent):
-        if text.isspace() and "ๆ" in sent[j + 1]:
+        if text.isspace() and len(sent) > j + 1 and "ๆ" in sent[j + 1]:
             continue
         if " ๆ" in text:
             text = text.replace(" ๆ", "ๆ")
@@ -143,8 +143,9 @@ def clean_with_dict(text, special_characters):
 
 def thai_text_to_phonemes(text: str) -> str:
     """Convert thai text to phonemes."""
-    res = text.strip().replace("  ", "...").replace("...","…")
+    res = text.strip().replace("  ", "...").replace("...","…").replace("‘","").replace("’","")
     res = thai_convert_numbers_to_words(res)
     res = thai_convert_alpha_symbols_to_words(res)
-    res = clean_maiyamok(res)
+    if "ๆ" in res:
+        res = clean_maiyamok(res)
     return res

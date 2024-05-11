@@ -15,7 +15,7 @@ hyperparameter. Some cleaners are English-specific. You'll typically want to use
 import re
 from unidecode import unidecode
 from text.thai import thai_text_to_phonemes
-from text.japanese import japanese_to_ipa2
+from text.japanese import japanese_text_to_phonemes
 from text.english import normalize_numbers
 
 # Regular expression matching whitespace:
@@ -183,7 +183,7 @@ def cjke_cleaners2(text):
     #     text = english_cleaners2(text)
 
     text = re.sub(r'\[JA\](.*?)\[JA\]',
-                  lambda x: japanese_to_ipa2(x.group(1))+' ', text)
+                  lambda x: japanese_text_to_phonemes(x.group(1))+' ', text)
     text = re.sub(r'\[TH\](.*?)\[TH\]',
                   lambda x: thai_text_to_phonemes(x.group(1))+' ', text)
     text = re.sub(r'\[EN\](.*?)\[EN\]',

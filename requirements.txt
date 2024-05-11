@@ -21,3 +21,5 @@ pypinyin
 jieba
 unidecode
 inflect
+mecab-python3
+unidic-lite

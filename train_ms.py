@@ -15,6 +15,7 @@ from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+import logging
 
 import commons
 import models
@@ -31,7 +32,6 @@ from text.symbols import symbols
 
 torch.backends.cudnn.benchmark = True
 global_step = 0
-
 
 def main():
     """Assume Single Node Multi GPUs Training Only"""
@@ -63,7 +63,8 @@ def run(rank, n_gpus, hps):
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval"))
 
     dist.init_process_group(
-        backend="nccl", init_method="env://", world_size=n_gpus, rank=rank
+        # backend="nccl", init_method="env://", world_size=n_gpus, rank=rank
+        backend='gloo' if os.name == 'nt' else 'nccl', init_method="env://", world_size=n_gpus, rank=rank
     )
     torch.manual_seed(hps.train.seed)
     torch.cuda.set_device(rank)
@@ -198,9 +199,6 @@ def run(rank, n_gpus, hps):
         n_speakers=hps.data.n_speakers,
         mas_noise_scale_initial=mas_noise_scale_initial,
         noise_scale_delta=noise_scale_delta,
-        use_language_embedding=hps.model.use_language_embedding,
-        num_languages=hps.model.num_languages,
-        embedded_language_dim=hps.model.embedded_language_dim,
         **hps.model,
     ).cuda(rank)
     net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm).cuda(rank)
@@ -333,6 +331,8 @@ def train_and_evaluate(
         y,
         y_lengths,
         speakers,
+         # ADD - lang embed
+        langs
     ) in enumerate(loader):
         if net_g.module.use_noise_scaled_mas:
             current_mas_noise_scale = (
@@ -351,6 +351,9 @@ def train_and_evaluate(
         )
         speakers = speakers.cuda(rank, non_blocking=True)
 
+        # ADD - lang embed
+        langs = langs.cuda(rank, non_blocking=True)
+
         with autocast(enabled=hps.train.fp16_run):
             (
                 y_hat,
@@ -361,7 +364,7 @@ def train_and_evaluate(
                 z_mask,
                 (z, z_p, m_p, logs_p, m_q, logs_q),
                 (hidden_x, logw, logw_),
-            ) = net_g(x, x_lengths, spec, spec_lengths, speakers)
+            ) = net_g(x, x_lengths, spec, spec_lengths, speakers, langs)
 
             if (
                 hps.model.use_mel_posterior_encoder
@@ -570,11 +573,13 @@ def evaluate(hps, generator, eval_loader, writer_eval):
             y,
             y_lengths,
             speakers,
+            langs
         ) in enumerate(eval_loader):
             x, x_lengths = x.cuda(0), x_lengths.cuda(0)
             spec, spec_lengths = spec.cuda(0), spec_lengths.cuda(0)
             y, y_lengths = y.cuda(0), y_lengths.cuda(0)
             speakers = speakers.cuda(0)
+            langs = langs.cuda(0)
 
             # remove else
             x = x[:1]
@@ -584,9 +589,10 @@ def evaluate(hps, generator, eval_loader, writer_eval):
             y = y[:1]
             y_lengths = y_lengths[:1]
             speakers = speakers[:1]
+            langs = langs[:1]
             break
         y_hat, attn, mask, *_ = generator.module.infer(
-            x, x_lengths, speakers, max_len=1000
+            x, x_lengths, speakers, max_len=1000, language_ids=langs
         )
         y_hat_lengths = mask.sum([1, 2]).long() * hps.data.hop_length
 

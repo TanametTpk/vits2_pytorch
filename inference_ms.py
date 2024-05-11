@@ -18,10 +18,10 @@ def get_text(text, hps):
     return text_norm
 
 
-CONFIG_PATH = "./configs/vits2_vctk_base.json"
-MODEL_PATH = "/path/to/pretrained_vctk.pth"
+CONFIG_PATH = "./configs/vits2_jet_base.json"
+MODEL_PATH = "./logs/jet_base/D_0.pth"
 TEXT = "VITS-2 is Awesome!"
-SPK_ID = 4
+SPK_ID = 87
 OUTPUT_WAV_PATH = "sample_vits2_ms.wav"
 
 hps = utils.get_hparams_from_file(CONFIG_PATH)
@@ -43,20 +43,18 @@ net_g = SynthesizerTrn(
     posterior_channels,
     hps.train.segment_size // hps.data.hop_length,
     n_speakers=hps.data.n_speakers,
-    use_language_embedding=hps.model.use_language_embedding,
-    num_languages=hps.model.num_languages,
-    embedded_language_dim=hps.model.embedded_language_dim,
     **hps.model
 ).cuda()
 _ = net_g.eval()
 
-_ = utils.load_checkpoint(MODEL_PATH, net_g, None)
+# _ = utils.load_checkpoint(MODEL_PATH, net_g, None)
 
 stn_tst = get_text(TEXT, hps)
 with torch.no_grad():
     x_tst = stn_tst.cuda().unsqueeze(0)
     x_tst_lengths = torch.LongTensor([stn_tst.size(0)]).cuda()
     sid = torch.LongTensor([SPK_ID]).cuda()
+    lid = torch.LongTensor([1]).cuda()
     audio = (
         net_g.infer(
             x_tst,
@@ -65,6 +63,7 @@ with torch.no_grad():
             noise_scale=0.667,
             noise_scale_w=0.8,
             length_scale=1,
+            language_ids=lid
         )[0][0, 0]
         .data.cpu()
         .float()

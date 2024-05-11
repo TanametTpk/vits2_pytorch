@@ -83,6 +83,9 @@ class StochasticDurationPredictor(nn.Module):
         if gin_channels != 0:
             self.cond = nn.Conv1d(gin_channels, filter_channels, 1)
 
+        if language_emb_dim != 0 and language_emb_dim is not None:
+            self.cond_lang = nn.Conv1d(language_emb_dim, filter_channels, 1)
+
     def forward(self, x, x_mask, w=None, g=None, reverse=False, noise_scale=1.0, lang_emb=None,):
         x = torch.detach(x)
         x = self.pre(x)
@@ -1304,7 +1307,7 @@ class SynthesizerTrn(nn.Module):
 
         # ADD - lang embbed
         lang_emb = None
-        if self.args.use_language_embedding and lid is not None:
+        if self.use_language_embedding and lid is not None:
             lang_emb = self.emb_l(lid).unsqueeze(-1)
 
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, g=g, lang_emb=lang_emb)
@@ -1345,7 +1348,7 @@ class SynthesizerTrn(nn.Module):
 
         w = attn.sum(2)
         if self.use_sdp:
-            l_length = self.dp(x, x_mask, w, g=g)
+            l_length = self.dp(x, x_mask, w, g=g, lang_emb=lang_emb)
             l_length = l_length / torch.sum(x_mask)
             logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=1.0, lang_emb=lang_emb)
             logw_ = torch.log(w + 1e-6) * x_mask
@@ -1440,7 +1443,7 @@ class SynthesizerTrn(nn.Module):
 
         # ADD - lang embbed
         lang_emb = None
-        if self.args.use_language_embedding and lid is not None:
+        if self.use_language_embedding and lid is not None:
             lang_emb = self.emb_l(lid).unsqueeze(-1)
         # ADD - lang embbed
 
@@ -1453,9 +1456,9 @@ class SynthesizerTrn(nn.Module):
         # ADD - lang embbed
         if durations is None:
             if self.use_sdp:
-                logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w)
+                logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w, lang_emb=lang_emb)
             else:
-                logw = self.dp(x, x_mask, g=g)
+                logw = self.dp(x, x_mask, g=g, lang_emb=lang_emb)
             w = torch.exp(logw) * x_mask * length_scale
         else:
             assert durations.shape[-1] == x.shape[-1]
